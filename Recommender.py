@@ -1,11 +1,12 @@
 from pyspark.sql.functions import col, count
 from pyspark.sql import SparkSession
 from pyspark.ml.recommendation import ALS, ALSModel
-from pyspark.ml.feature import StringIndexer
+import pyspark
 import pandas as pd
 from sklearn.metrics.pairwise import cosine_similarity
 import seaborn as sns
 import matplotlib.pyplot as plt
+import numpy as np
 
 def main():
     url = 'jdbc:postgresql://localhost:8888/goodreads'
@@ -27,36 +28,37 @@ def main():
         .option('driver','org.postgresql.Driver').load()
     
     predictions = ALSModel.load('bookrecmodel')
+    userfactors, itemfactors = predictions.userFactors, predictions.itemFactors
 
-    input = 'https://www.goodreads.com/book/show/7235533-the-way-of-kings'
+    user_df = userfactors.toPandas()
+    item_df = itemfactors.toPandas()
 
-    lookup = review_df['book_url','bookIndex']
+    user_mat = np.array([*user_df.features])
+    item_mat = np.array([*item_df.features])
 
-    itemfactors = predictions.itemFactors
-    df = itemfactors.toPandas()
-    features = df['features'].tolist()
-    bookindex = df.id
-
-    book = lookup.filter(review_df.book_url == input).toPandas()
-    index = int(list(book.iloc[0])[1])
+    user_indx = np.array([*user_df.id])
+    item_indx = np.array([*item_df.id])
     
-    dists = cosine_similarity(X=features)
-    dist_df = pd.DataFrame(dists, columns=bookindex, index=bookindex)
-
-    row = dist_df.iloc[index]
-    ranked_row = row.sort_values(ascending=False)
-    top10books = ranked_row.iloc[0:10]
-
-    urls = []
-    for i in top10books.index:
-        book = lookup.filter(review_df.bookIndex == i).toPandas()
-        url = list(book.iloc[0])[0]
-        urls.append(url)
+    R_hat = user_mat@item_mat.T
+    R_df = pd.DataFrame(R_hat, index=user_indx, columns=item_indx)
     
-    print(urls)
-    # top25 = dists[:25,:25]
-    # sns.heatmap(top25, annot=False, cmap='crest')
-    # plt.show()
+    reviews = [0]*21312
+    reviews[100] = 1
+    reviews[200] = 0.5
+    reviews[300] = 0.75
+    reviews[400] = -1
+    reviews[500] = -0.25
+
+    newuser = {'userIndex':7000,
+               'vader_score_num':reviews,
+               'bookIndex':item_indx}
+    
+    #user = pd.DataFrame(newuser)
+    user = pyspark.sql.DataFrame(newuser,spark)
+    user.show()
+    #print(user)
+    # guess = predictions.transform(user)
+    # print(guess)
     
 if __name__ == '__main__':
     main()
